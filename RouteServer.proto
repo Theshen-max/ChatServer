@@ -1,0 +1,18 @@
+syntax = "proto3";
+package message;
+
+// 大一统的路由信封：既能做请求，也能做响应，还能做下发通知
+message RoutePackage {
+  int32 msgId = 1;       // 业务ID
+  string targetUid = 2;  // 接收方 UID
+  string jsonData = 3;   // 消息体
+
+  // 以下是双向流特有字段
+  int32 error = 4;       // 错误码 (0=成功。如果不为0，说明这是一个错误回执包)
+  string serverId = 5;   // 用于第一条消息握手，告诉路由服 "我是 ChatServer-01"
+}
+
+service RouteService {
+  // 建立双向流
+  rpc RouteMessageStream(stream RoutePackage) returns (stream RoutePackage);
+}

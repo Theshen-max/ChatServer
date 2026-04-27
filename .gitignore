@@ -1,0 +1,28 @@
+# CLion & CMake 缓存
+.idea/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+Makefile
+*.ninja
+
+# vcpkg 依赖库目录 (绝对不能传，让别人克隆后自己用 vcpkg 编)
+vcpkg_installed/
+vcpkg/
+vcpkg-export-*/
+
+# 编译生成的二进制与中间文件
+*.exe
+*.dll
+*.pdb
+*.lib
+*.obj
+*.ilk
+*.exp
+
+# 运行日志与本地数据库、测试证书 (安全规范：私钥绝对不上传)
+*.log
+*.db
+server.key
+server.crt
+ChatData/

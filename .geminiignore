@@ -1,0 +1,32 @@
+# 忽略 CMake 生成的构建目录 (最吃 Token 的罪魁祸首)
+build/
+out/
+bin/
+cmake-build-*/
+.cmake/
+CMakeCache.txt
+CMakeFiles/
+
+# 忽略 IDE 的配置缓存
+.idea/
+.vs/
+*.user
+
+# 忽略编译中间产物和可执行文件
+*.o 
+*.obj
+*.exe
+*.dll
+*.so
+*.a
+*.lib
+
+# 忽略日志和本地数据库文件
+*.log
+*.sqlite
+*.db
+
+.git/
+.svn/
+
+# 注意：这里千万不要写 headers/ 或 sources/，让 AI 默认去读取它们
