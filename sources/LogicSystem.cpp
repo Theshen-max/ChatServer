@@ -98,9 +98,9 @@ void LogicSystem::registerHandlers()
 					// 取消重连定时器
 					if (connectionCtx->reconnectTimer)
 						connectionCtx->reconnectTimer->cancel();
-					// 取消Redis过期时间
+					// 设置Redis过期时间300s，后面由CSession心跳维持
 					auto& redis = RedisMgr::getServerConfigRedis();
-					redis.persist(uid);
+					redis.expire(uid, 300);
 				}
 			}
 			// 未命中缓存，新连接
@@ -1081,7 +1081,7 @@ void LogicSystem::onSessionDisconnected(const std::string& uid, const boost::asi
 				});
 				// 同步给Redis里添加TTL
 				auto& redis = RedisMgr::getServerConfigRedis();
-				redis.expire(uid, std::chrono::seconds(150));
+				redis.expire(uid, 300);
 			}
 		}
 	});
