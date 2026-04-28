@@ -58,6 +58,7 @@ void CServer::startServerReport()
 	{
 		if (ec) return;
 
+		// 测试：每3秒输出当前在线用户数
 		// 获取当前最真实的物理连接数
 		int sessionCount = 0;
 		{
