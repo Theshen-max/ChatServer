@@ -251,11 +251,11 @@ int64_t CSession::getLastActiveTime() const
 
 void CSession::updateActiveTime()
 {
-	// steady_clock
-	auto now = std::chrono::steady_clock::now();
-
 	_lastActiveTime.store(std::chrono::duration_cast<std::chrono::seconds>(
 		std::chrono::system_clock::now().time_since_epoch()).count(), std::memory_order_relaxed);
+
+	// steady_clock
+	auto now = std::chrono::steady_clock::now();
 
 	auto duration_since_redis_update = std::chrono::duration_cast<std::chrono::seconds>(now - _lastRedisUpdate).count();
 
