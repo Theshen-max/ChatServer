@@ -26,3 +26,4 @@ vcpkg-export-*/
 server.key
 server.crt
 ChatData/
+config.ini
