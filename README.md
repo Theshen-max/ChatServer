@@ -1,14 +1,21 @@
-# TitanIM - ChatServer (核心长连接微服务)
+# 聊天核心服务器 (ChatServer)
+
+**高性能分布式长连接消息中转中心**
 
 ![C++](https://img.shields.io/badge/C++-20-blue.svg) ![Boost](https://img.shields.io/badge/Boost.Asio-1.80+-orange.svg) ![RabbitMQ](https://img.shields.io/badge/RabbitMQ-AMQP-red.svg)
 
-> **TitanIM 分布式即时通讯生态**的核心长连接承载节点。负责维持客户端的 SSL/TCP 长连接，处理 IM 核心业务逻辑（消息收发、状态同步），单机可承载 10 万+ QPS 的极高并发。
-
-## 核心架构亮点
-* **无栈协程底座**：全面采用 **C++20 Coroutines (`co_await`)** 重构网络 I/O 与数据库调用，彻底消除 Callback Hell，实现极致的并发上下文切换。
-* **无锁多车道设计 (Partitioned Strands)**：根据 UserID 哈希将请求分发至 16 条独立的 Asio Strand 协程车道，严格保证单一用户的消息时序，消除线程竞态。
-* **极限背压防御 (Backpressure)**：当底层落盘极度拥塞时，通过实时监控飞行队列 (`_inflightMsgs`) 实施 Fail-Fast 降级，免疫 OOM 雪崩。
-* **跨线程状态机防撕裂**：采用 `std::atomic<bool>` CAS 硬件级并发锁配合 `boost::asio::dispatch` 归一化执行器，彻底根除高并发断线重连时的 SSL 状态机崩溃 (`0xC0000005`)。
+## 项目目标
+承载海量用户的 TCP 长连接，负责实时消息的路由、转发与在线状态管理。它是整个 IM 系统中压力最大、逻辑最核心的节点。
 
 ## 技术栈
-C++20 / Boost.Asio / Boost.Beast / OpenSSL / MySQL 8.0 / Redis++ / RabbitMQ (AMQP-CPP) / gRPC
+- **核心引擎**: Boost.Asio (基于 Strand 的无锁化并发设计)
+- **通信协议**: 自定义二进制协议帧 + JSON/Protobuf 负载
+- **安全性**: OpenSSL (TLS 1.3 链路加密)
+- **可靠性组件**: RabbitMQ (异步落盘队列), Redis (热点会话缓存与未读计数)
+
+## 核心特性
+- **最终一致性模型**: 采用“入队即确认”策略，消息投递至 RabbitMQ 后立即回包，由后台消费者完成 MySQL持久化，显著提升吞吐。
+- **跨服中转**: 通过 gRPC 联动 `RouteServer`，实现不同物理服务器间用户的透明通信。
+- **高并发防护**:
+    - **SendRateLimiter**: 限制单连接瞬时发包速率。
+    - **Heartbeat**: 应用层双向心跳监测，及时清理僵尸连接。
