@@ -4,6 +4,7 @@ bool RabbitMQClient::init(const std::string& host, const std::string& port, cons
 {
 	_exchangeName = exchangeName;
 	_worker = std::make_unique<Work>(_ioc.get_executor());
+
 	// 启动专属IO线程来启动MQ事件循环
 	_thread = std::jthread([this]
 	{
@@ -14,6 +15,9 @@ bool RabbitMQClient::init(const std::string& host, const std::string& port, cons
 
 	auto initPromise = std::make_shared<std::promise<bool>>();
 	std::future<bool> initFuture = initPromise->get_future();
+	// 使用 std::shared_ptr<bool> 防止多次 set_value 导致崩溃
+	auto promiseResolved = std::make_shared<std::atomic<bool>>(false);
+
 	try
 	{
 		// 初始化Asio句柄
@@ -21,14 +25,44 @@ bool RabbitMQClient::init(const std::string& host, const std::string& port, cons
 		// 建立TCP连接
 		_connection = std::make_unique<AMQP::Connection>(_handler.get(), AMQP::Login(user, passwd), "/");
 		_handler->setConnection(_connection.get());
-		boost::asio::co_spawn(_ioc, [this, host, port, initPromise]()->boost::asio::awaitable<void>
+
+		_handler->setReadyCallback([this, initPromise, promiseResolved]()
 		{
-			try
-			{
-				// 建立TCP连接
-				co_await _handler->async_connect(host, port);
-				// 创建信道
-				_channel = std::make_unique<AMQP::Channel>(_connection.get());
+			std::cout << "[RabbitMQ Producer] AMQP Connection is Ready! Creating Channel..." << std::endl;
+
+			// 此时创建 Channel 绝对安全
+			_channel = std::make_unique<AMQP::Channel>(_connection.get());
+
+			// 监听 Channel 的错误
+			_channel->onError([initPromise, promiseResolved](const char* message) {
+				std::cerr << "[RabbitMQ Producer] Channel error: " << message << std::endl;
+				if (!promiseResolved->exchange(true)) {
+					initPromise->set_value(false);
+				}
+			});
+
+			_channel->onReady([this, initPromise, promiseResolved]() {
+				std::cout << "[RabbitMQ Producer] Channel is Ready! Declaring Exchange..." << std::endl;
+				// 声明直连交换机（持久化）
+				/**
+				 * 1. 交换机名字
+				 * 2. 交换机类型
+				 * 3. 交换机标志
+				*/
+				_channel->declareExchange(_exchangeName, AMQP::direct, AMQP::durable)
+				.onSuccess([initPromise, promiseResolved]() {
+					std::cout << "[RabbitMQ Producer] Exchange declared successfully!" << std::endl;
+					if (!promiseResolved->exchange(true)) {
+						initPromise->set_value(true);
+					}
+				})
+				.onError([initPromise, promiseResolved](const char* message) {
+					std::cerr << "[RabbitMQ Producer] Exchange declare failed: " << message << std::endl;
+					if (!promiseResolved->exchange(true)) {
+						initPromise->set_value(false);
+					}
+				});
+				// 声明选择确认
 				_channel->confirmSelect()
 				.onAck([this](uint64_t deliveryTag, bool multiple)
 				{
@@ -58,7 +92,8 @@ bool RabbitMQClient::init(const std::string& host, const std::string& port, cons
 					if (multiple)
 					{
 						std::vector<uint64_t> tagsToResend;
-						for (auto it = _inflightMsgs.begin(); it != _inflightMsgs.upper_bound(deliveryTag); ++it) {
+						for (auto it = _inflightMsgs.begin(); it != _inflightMsgs.upper_bound(deliveryTag); ++it)
+						{
 							tagsToResend.push_back(it->first);
 						}
 						for (auto t: tagsToResend)
@@ -69,32 +104,32 @@ bool RabbitMQClient::init(const std::string& host, const std::string& port, cons
 					else
 						resendTask(deliveryTag);
 				});
-
-				// 声明直连交换机（持久化）
-				/**
-				 * 1. 交换机名字
-				 * 2. 交换机类型
-				 * 3. 交换机标志
-				*/
-				_channel->declareExchange(_exchangeName, AMQP::direct, AMQP::durable).
-				onSuccess([initPromise]
-				{
-					std::cout << "[RabbitMQ] Exchange declared successfully!" << std::endl;
-					initPromise->set_value(true);
-				})
-				.onError([initPromise](const char* message)
-				{
-					std::cerr << "[RabbitMQ] Exchange declare failed: " << message << std::endl;
-					initPromise->set_value(false);
-				});
+			});
+		});
+		_handler->setErrorCallback([initPromise, promiseResolved](const char* message) {
+			std::cerr << "[RabbitMQ Producer] Connection level error: " << message << std::endl;
+			if (!promiseResolved->exchange(true)) {
+				initPromise->set_value(false);
+			}
+		});
+		boost::asio::co_spawn(_ioc, [this, host, port, initPromise, promiseResolved]()->boost::asio::awaitable<void>
+		{
+			try
+			{
+				// 建立TCP连接
+				co_await _handler->async_connect(host, port);
+				std::cout << "[RabbitMQ Producer] TCP Socket connected. Waiting for AMQP Handshake..." << std::endl;
 			}
 			catch (const std::exception& e)
 			{
 				std::cerr << "[RabbitMQ] Async connect exception: " << e.what() << std::endl;
-				initPromise->set_value(false);
+				if (!promiseResolved->exchange(true)) {
+					initPromise->set_value(false);
+				}
 			}
 		}, boost::asio::detached);
 
+		// 阻塞等待完整流程结束 (TCP连接 -> AMQP握手 -> Channel建立 -> Exchange声明)
 		if (initFuture.wait_for(std::chrono::seconds(5)) == std::future_status::ready)
 		{
 			return initFuture.get();

@@ -139,10 +139,22 @@ void AmqpAsioHandler::doWrite()
 	});
 }
 
+void AmqpAsioHandler::setReadyCallback(ReadyCallback cb)
+{
+	_readyCallback = std::move(cb);
+}
+
+void AmqpAsioHandler::setErrorCallback(ErrorCallback cb)
+{
+	_errorCallback = std::move(cb);
+}
+
 
 void AmqpAsioHandler::onReady(AMQP::Connection* connection)
 {
 	std::cout << "[AMQP Protocol] AMQP Connection is READY!" << std::endl;
+	if (_readyCallback)
+		_readyCallback();
 }
 
 void AmqpAsioHandler::onClosed(AMQP::Connection* connection)
@@ -153,4 +165,6 @@ void AmqpAsioHandler::onClosed(AMQP::Connection* connection)
 void AmqpAsioHandler::onError(AMQP::Connection* connection, const char* message)
 {
 	std::cerr << "[AMQP Protocol] ERROR: " << message << std::endl;
+	if (_errorCallback)
+		_errorCallback(message);
 }

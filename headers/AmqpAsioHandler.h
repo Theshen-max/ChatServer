@@ -6,6 +6,9 @@
 class AmqpAsioHandler: public AMQP::ConnectionHandler, public std::enable_shared_from_this<AmqpAsioHandler>
 {
 public:
+	using ReadyCallback = std::function<void()>;
+	using ErrorCallback = std::function<void(const char*)>;
+
 	AmqpAsioHandler(boost::asio::io_context& ioc);
 
 	~AmqpAsioHandler() override;
@@ -16,6 +19,10 @@ public:
 	void setConnection(AMQP::Connection* connection);
 
 	boost::asio::ip::tcp::socket& socket();
+
+	void setReadyCallback(ReadyCallback cb);
+
+	void setErrorCallback(ErrorCallback cb);
 
 private:
 	void onData(AMQP::Connection* connection, const char* buffer, size_t size) override;
@@ -40,6 +47,10 @@ private:
 	bool _isWriting{false};
 
 	bool _connected{false};
+
+	ReadyCallback _readyCallback;
+
+	ErrorCallback _errorCallback;
 
 };
 
