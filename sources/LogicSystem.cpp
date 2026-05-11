@@ -469,32 +469,65 @@ void LogicSystem::registerHandlers()
 		}
 
 		// Redis 幂等性校验 (去重防刷核心)
-		auto& redis = RedisMgr::getMsgInfoRedis();
 		std::string redisKey = "ClientMsgId:" + clientMsgId;
-		std::string msgId;
-		sw::redis::OptionalString optionalString = redis.get(redisKey);
-		if (optionalString)
+		std::string msgId = std::to_string(_snowflake->nextId());
+
+		// 用于保存 Lua 脚本返回的旧值
+		sw::redis::OptionalString existingMsgId;
+
+		// 判断是否首次接收消息
+		try
 		{
-			// 更新Redis过期时间
-			redis.set(redisKey, msgId, std::chrono::seconds(600));
+			auto& redis = RedisMgr::getMsgInfoRedis();
+			// 编写 Lua 脚本：GET、SET、EXPIRE
+			// 如果存在：延长生命周期并返回旧值
+			// 如果不存在：写入新值并设置过期时间，返回 nil
+			// TODO:缓存脚本
+			std::string luaScript = R"(
+				local current = redis.call('GET', KEYS[1])
+	            if current then
+	                redis.call('EXPIRE', KEYS[1], ARGV[1])
+	                return current
+	            else
+	                redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[1])
+	                return nil
+	            end
+			)";
+			// 执行 Lua 脚本。
+			// 传入 1个 KEY: redisKey
+			// 传入 2个 ARGV: 过期时间("600"), 新生成的MsgId
+			existingMsgId = redis.eval<sw::redis::OptionalString>(luaScript, {redisKey}, {"600", msgId});
+		}
+		catch (const sw::redis::Error& e)
+		{
+			// 细粒度拦截：Redis 网络波动或不可用
+			std::cerr << "[Idempotency Error] Redis 校验失败，原因: " << e.what() << std::endl;
+			// 【Fail-Fast】立即打断业务流！给客户端返回系统级错误，让客户端静默重试或UI提示
+			rapidjson::Document errDoc = RapidJsonMgr::createDocument();
+			// TODO:添加幂等错误码
+			// RapidJsonMgr::addMember(errDoc, "error", ErrorCodes::SystemBusy);
+			// session->postSend(ID_CHAT_MSG_RSP, RapidJsonMgr::docToString(errDoc));
+			return;
+		}
 
-			// 客户端的超时重发
-			std::cout << "[去重拦截] 收到重复的消息请求: " << clientMsgId << std::endl;
+		if (existingMsgId)
+		{
+			const std::string& realMsgId = existingMsgId.value();
+			std::cout << "[去重拦截] 收到重复消息: " << clientMsgId << "，返回旧 msgId: " << realMsgId << std::endl;
 
-			// 从 Redis 的 Value 中解析出之前生成的 msgId
-			msgId = optionalString.value();
-
-			// 再次给发送方回执 ACK，不转发，不写库
+			// 构造“伪装”的成功回包，参数必须与第一次一模一样
 			RapidJsonMgr::addMember(rspDoc, "error", ErrorCodes::Success);
 			RapidJsonMgr::addMember(rspDoc, "clientMsgId", clientMsgId);
-			RapidJsonMgr::addMember(rspDoc, "msgId", msgId);
+			RapidJsonMgr::addMember(rspDoc, "msgId", realMsgId);
 			RapidJsonMgr::addMember(rspDoc, "seqId", seqId);
 			return;
 		}
 
-		// 首次接收消息
-		msgId = std::to_string(_snowflake->nextId());
-		redis.set(redisKey, msgId, std::chrono::seconds(600));
+		// TODO:首次请求的正常业务投递 (独立的 try-catch)
+		// 此时 Redis 已经写入了，但业务没成功怎么办？
+		// 方案A：如果是短暂故障，客户端超时重试，上面 Lua 脚本会拦截，导致客户端永远收不到真实的投递。
+		// 方案B（推荐）：在这里通过 catch 捕获后，主动去 Redis 删掉这个 Key (DEL redisKey)，
+		// 让客户端的下一次重试能够重新走入首次投递的逻辑！
 		RapidJsonMgr::addMember(rspDoc, "error", ErrorCodes::Success);
 		RapidJsonMgr::addMember(rspDoc, "clientMsgId", clientMsgId);
 		RapidJsonMgr::addMember(rspDoc, "msgId", msgId);
